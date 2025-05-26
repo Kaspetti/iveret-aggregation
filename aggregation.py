@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import cartopy.crs as crs
 
 from cluster import from_geo, to_geo
-from fitting import pw_evaluate, pw_fitting
+from fitting import pw_evaluate, pw_evaluate_at_t, pw_fitting
 
 def aggregate(lines: pd.DataFrame):
 	fig = plt.figure(figsize=(16, 9))
@@ -29,18 +29,65 @@ def aggregate(lines: pd.DataFrame):
 
 	param_ts = get_ts(param_pts)
 
-	for line in lines_pts:
+	segments = 3
+	degree = 3
+
+	all_cx = np.zeros((len(lines_pts), segments, degree + 1))
+	all_cy = np.zeros((len(lines_pts), segments, degree + 1))
+	all_cz = np.zeros((len(lines_pts), segments, degree + 1))
+	all_t_segments = np.zeros((len(lines_pts), segments, 2))
+
+	for i, line in enumerate(lines_pts):
 		line_ts = get_line_ts(line, param_pts, param_ts)
 
-		cx, cy, cz, ts = pw_fitting(line, 3, 3, line_ts)
-		pts_fitted = pw_evaluate(cx, cy, cz, ts, 10)
+		cx, cy, cz, t_segments = pw_fitting(line, degree, segments, line_ts)
+		all_cx[i] = cx
+		all_cy[i] = cy
+		all_cz[i] = cz
+		all_t_segments[i] = t_segments
+
+		pts_fitted = pw_evaluate(cx, cy, cz, t_segments, 10)
 		coords_fitted = to_geo(pts_fitted)
 
-		ax.plot(coords_fitted[:, 1], coords_fitted[:, 0])
+		ax.plot(coords_fitted[:, 1], coords_fitted[:, 0], c="#f003")
+
+	median = create_median(all_cx, all_cy, all_cz, all_t_segments)	
+	median_coords = to_geo(median)
+
+	ax.plot(median_coords[:, 1], median_coords[:, 0], c="#00f", linewidth=2)
 
 	plt.show()
 
 	return start_id, end_id
+
+
+def create_median(
+		cxs: NDArray[np.floating], cys: NDArray[np.floating], czs: NDArray[np.floating], t_segments: NDArray[np.floating]
+		) -> NDArray[np.floating]:
+	n_pts = 20
+	ts = np.linspace(0, 1, n_pts)
+	line_count = cxs.shape[0]
+
+	pts = np.full((n_pts, line_count, 3), np.nan)
+
+	for i, t in enumerate(ts):
+		for j in range(line_count):
+			cx, cy, cz, t_segment = cxs[j], cys[j], czs[j], t_segments[j]
+			pt_t = pw_evaluate_at_t(cx, cy, cz, t_segment, t)
+
+			if pt_t.shape[0] != 0:
+				pts[i][j] = pt_t
+
+	result = np.full((n_pts, 3), np.nan)
+
+	for i in range(n_pts):
+		valid_mask = ~np.isnan(pts[i, :, 0])
+		if np.sum(valid_mask) >= 5:
+			result[i] = np.nanmedian(pts[i], axis=0)
+
+	return result
+
+	return np.nanmedian(pts, axis=1)
 
 
 def get_ts(line_pts: NDArray[np.floating]) -> NDArray[np.floating]:
